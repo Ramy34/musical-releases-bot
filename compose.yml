@@ -1,0 +1,13 @@
+services:
+  releases-bot:
+    build: .
+    container_name: releases-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    networks:
+      - postgresql_default
+
+networks:
+  postgresql_default:
+    external: true
