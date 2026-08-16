@@ -192,12 +192,15 @@ def check_new_releases_job(trigger_chat_id=None):
                     print(f"Could not resolve Spotify ID for {name}")
                     continue
             
-            albums_url = f"https://api.spotify.com/v1/artists/{spotify_id}/albums?include_groups=album,single,ep,compilation&limit=10&market=MX"
+            albums_url = f"https://api.spotify.com/v1/artists/{spotify_id}/albums?include_groups=album,single,ep,compilation,appears_on&limit=50&market=MX"
             res = spotify_request(albums_url)
             if not res or not res.get("items"):
                 continue
                 
-            for album in res["items"]:
+            # Ordenar por fecha de lanzamiento (de más reciente a más antiguo)
+            sorted_albums = sorted(res["items"], key=lambda x: x.get("release_date", ""), reverse=True)
+
+            for album in sorted_albums[:10]:
                 album_id = album["id"]
                 album_name = album["name"]
                 release_date = album["release_date"]
@@ -224,7 +227,8 @@ def check_new_releases_job(trigger_chat_id=None):
                         "album": "💿 Álbum",
                         "single": "🎵 Sencillo (Single)",
                         "ep": "💿 EP",
-                        "compilation": "🗂️ Recopilación"
+                        "compilation": "🗂️ Recopilación",
+                        "appears_on": "🤝 Colaboración"
                     }
                     friendly_type = type_labels.get(release_type, "🎵 Lanzamiento")
                     
@@ -249,7 +253,7 @@ def check_new_releases_job(trigger_chat_id=None):
                     print(f"Error inserting notified album {album_id}: {db_err}")
 
         print(f"Releases check completed. Notified of {new_releases_count} new releases.")
-        if trigger_chat_id:
+        if trigger_chat_id or new_releases_count > 0:
             if new_releases_count == 0:
                 send_telegram_message(f"✅ *Búsqueda de lanzamientos completada.*\nNo se encontraron nuevos lanzamientos en los últimos {LOOKBACK_DAYS} días para tus artistas en seguimiento.")
             else:
