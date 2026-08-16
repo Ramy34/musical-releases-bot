@@ -138,5 +138,12 @@ Una vez activo, el bot responde a los siguientes comandos en tu chat de Telegram
 ├── Dockerfile           # Imagen Docker para el entorno Python
 ├── requirements.txt     # Dependencias de Python
 ├── .env.example         # Plantilla de variables de entorno
+├── LICENSE              # Licencia MIT del proyecto
 └── README.md            # Documentación del proyecto
 ```
+
+---
+
+## 📄 Licencia
+
+Este proyecto está bajo la Licencia **MIT** - consulta el archivo [LICENSE](LICENSE) para más detalles.
