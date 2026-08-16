@@ -26,6 +26,7 @@ DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
 SPOTIFY_CLIENT_ID = os.environ.get("SPOTIFY_CLIENT_ID", "").strip()
 SPOTIFY_CLIENT_SECRET = os.environ.get("SPOTIFY_CLIENT_SECRET", "").strip()
 CHECK_INTERVAL_HOURS = int(os.environ.get("CHECK_INTERVAL_HOURS", "12"))
+LOOKBACK_DAYS = int(os.environ.get("LOOKBACK_DAYS", "3"))
 
 # Global states
 spotify_access_token = ""
@@ -162,31 +163,18 @@ def check_new_releases_job(trigger_chat_id=None):
     with check_lock:
         if is_checking:
             if trigger_chat_id:
-                send_telegram_message("ℹ️ Ya hay una búsqueda de lanzamientos en progreso. Por favor espera a que termine.")
+                send_telegram_message("Ya hay una búsqueda de lanzamientos en progreso. Por favor espera a que termine.")
             print("Check already in progress. Skipping.")
             return
         is_checking = True
         
     try:
-        print("Starting releases check job...")
-        # Auto-seed new playlist-active artists from Sinfonia automatically
-        try:
-            execute_query("""
-                INSERT INTO adm.releases_seguimiento (artista, origen_importacion)
-                SELECT "Artista", 'auto'
-                FROM vista.artista_resumen
-                WHERE "Tiene playlist" = 'Sí'
-                ON CONFLICT (artista) DO NOTHING;
-            """)
-        except Exception as seed_err:
-            print(f"Auto-seed error during job: {seed_err}")
-
         # Get all followed artists
         artists = execute_query("SELECT id, artista, spotify_id FROM adm.releases_seguimiento ORDER BY artista ASC;", fetch=True)
         if not artists:
             print("No artists to follow.")
             if trigger_chat_id:
-                send_telegram_message("ℹ️ No tienes ningún artista en tu lista de seguimiento actualmente. Agrega algunos usando `/seguir Nombre`.")
+                send_telegram_message("No tienes ningún artista en tu lista de seguimiento actualmente. Agrega algunos usando `/seguir Nombre`.")
             return
 
         new_releases_count = 0
@@ -226,7 +214,7 @@ def check_new_releases_job(trigger_chat_id=None):
                     try:
                         rel_date = datetime.strptime(release_date, "%Y-%m-%d").date()
                         today = datetime.now().date()
-                        if today - timedelta(days=3) <= rel_date <= today + timedelta(days=1):
+                        if today - timedelta(days=LOOKBACK_DAYS) <= rel_date <= today + timedelta(days=1):
                             is_recent = True
                     except Exception as date_err:
                         print(f"Error parsing date {release_date}: {date_err}")
@@ -263,13 +251,13 @@ def check_new_releases_job(trigger_chat_id=None):
         print(f"Releases check completed. Notified of {new_releases_count} new releases.")
         if trigger_chat_id:
             if new_releases_count == 0:
-                send_telegram_message("✅ *Búsqueda de lanzamientos completada.*\nNo se encontraron nuevos lanzamientos en los últimos 3 días para tus artistas en seguimiento.")
+                send_telegram_message(f"✅ *Búsqueda de lanzamientos completada.*\nNo se encontraron nuevos lanzamientos en los últimos {LOOKBACK_DAYS} días para tus artistas en seguimiento.")
             else:
                 send_telegram_message(f"✅ *Búsqueda de lanzamientos completada.*\nSe encontraron y notificaron *{new_releases_count}* nuevos lanzamientos.")
     except Exception as e:
         print(f"Error in releases job: {e}")
         if trigger_chat_id:
-            send_telegram_message(f"❌ Ocurrió un error al buscar lanzamientos: {e}")
+            send_telegram_message(f"Ocurrió un error al buscar lanzamientos: {e}")
     finally:
         with check_lock:
             is_checking = False
@@ -292,32 +280,32 @@ def handle_command_seguir(chat_id, artist_name):
         
     try:
         execute_query("INSERT INTO adm.releases_seguimiento (artista, origen_importacion) VALUES (%s, 'manual') ON CONFLICT (artista) DO NOTHING;", (artist_name,))
-        send_telegram_message(f"✅ Se ha añadido a *{artist_name}* a la lista de seguimiento. Buscaré sus nuevos lanzamientos en Spotify.")
+        send_telegram_message(f"Se ha añadido a *{artist_name}* a la lista de seguimiento. Buscaré sus nuevos lanzamientos en Spotify.")
         run_check_async(chat_id)
     except Exception as e:
-        send_telegram_message(f"❌ Error al guardar artista: {e}")
+        send_telegram_message(f"Error al guardar artista: {e}")
 
 def handle_command_desafiliar(chat_id, artist_name):
     if not artist_name:
-        send_telegram_message("⚠️ Por favor escribe el nombre del artista. Uso: `/desafiliar Nombre del Artista`")
+        send_telegram_message("Por favor escribe el nombre del artista. Uso: `/desafiliar Nombre del Artista`")
         return
         
     try:
         exists = execute_query("SELECT 1 FROM adm.releases_seguimiento WHERE artista ILIKE %s;", (artist_name,), fetch=True)
         if not exists:
-            send_telegram_message(f"ℹ️ El artista *{artist_name}* no se encuentra en tu lista de seguimiento.")
+            send_telegram_message(f"El artista *{artist_name}* no se encuentra en tu lista de seguimiento.")
             return
             
         execute_query("DELETE FROM adm.releases_seguimiento WHERE artista ILIKE %s;", (artist_name,))
-        send_telegram_message(f"✅ Se ha eliminado a *{artist_name}* de la lista de seguimiento.")
+        send_telegram_message(f"Se ha eliminado a *{artist_name}* de la lista de seguimiento.")
     except Exception as e:
-        send_telegram_message(f"❌ Error al desafiliar artista: {e}")
+        send_telegram_message(f"Error al desafiliar artista: {e}")
 
 def handle_command_siguiendo(chat_id):
     try:
         rows = execute_query("SELECT artista, spotify_id FROM adm.releases_seguimiento ORDER BY artista ASC;", fetch=True)
         if not rows:
-            send_telegram_message("ℹ️ No estás siguiendo a ningún artista actualmente. Agrega uno con `/seguir Nombre`.")
+            send_telegram_message("No estás siguiendo a ningún artista actualmente. Agrega uno con `/seguir Nombre`.")
             return
             
         msg = "📋 *Artistas en Seguimiento:*\n\n"
@@ -330,29 +318,7 @@ def handle_command_siguiendo(chat_id):
                 msg += f"{idx}. {name} _(Sin ID de Spotify, se resolverá en la próxima búsqueda)_\n"
         send_telegram_message(msg)
     except Exception as e:
-        send_telegram_message(f"❌ Error al consultar lista: {e}")
-
-def handle_command_sembrar(chat_id):
-    send_telegram_message("⏳ Iniciando importación automática de tus artistas (artistas que tienen playlist)...")
-    try:
-        candidates = execute_query("SELECT \"Artista\" FROM vista.artista_resumen WHERE \"Tiene playlist\" = 'Sí' ORDER BY \"Artista\" ASC;", fetch=True)
-        if not candidates:
-            send_telegram_message("⚠️ No encontré artistas con playlist en tu base de datos.")
-            return
-            
-        imported_count = 0
-        for r in candidates:
-            name = r[0]
-            try:
-                execute_query("INSERT INTO adm.releases_seguimiento (artista, origen_importacion) VALUES (%s, 'auto') ON CONFLICT (artista) DO NOTHING;", (name,))
-                imported_count += 1
-            except:
-                pass
-                
-        send_telegram_message(f"✅ ¡Importación completada! Se agregaron *{imported_count}* artistas a tu lista de seguimiento.")
-        run_check_async(chat_id)
-    except Exception as e:
-        send_telegram_message(f"❌ Error al sembrar artistas: {e}")
+        send_telegram_message(f"Error al consultar lista: {e}")
 
 # ----------------- FLASK SERVER THREAD -----------------
 def run_flask():
@@ -370,7 +336,7 @@ def main():
     if not SPOTIFY_CLIENT_SECRET: missing_vars.append("SPOTIFY_CLIENT_SECRET")
 
     if missing_vars:
-        print(f"⚠️ ADVERTENCIA: Faltan las siguientes variables de entorno: {', '.join(missing_vars)}")
+        print(f"ADVERTENCIA: Faltan las siguientes variables de entorno: {', '.join(missing_vars)}")
         print("Asegúrate de configurar tu archivo .env o pasar las variables al contenedor.")
     
     # Start scheduler thread
@@ -386,7 +352,6 @@ def main():
         "➕ /seguir `<artista>` - Seguir a un nuevo artista\n"
         "➖ /desafiliar `<artista>` - Dejar de seguir a un artista\n"
         "📋 /siguiendo - Listar artistas en seguimiento\n"
-        "🌱 /sembrar - Auto-seguir artistas con playlist\n"
         "🔍 /checar - Forzar búsqueda de lanzamientos ahora"
     )
     
@@ -412,7 +377,6 @@ def main():
                         "• /seguir `<nombre>`\n"
                         "• /desafiliar `<nombre>`\n"
                         "• /siguiendo\n"
-                        "• /sembrar\n"
                         "• /checar"
                     )
                 elif text_lower.startswith("/seguir "):
@@ -423,8 +387,6 @@ def main():
                     handle_command_desafiliar(chat_id, name)
                 elif text_lower in ["/siguiendo", "siguiendo"]:
                     handle_command_siguiendo(chat_id)
-                elif text_lower in ["/sembrar", "sembrar"]:
-                    handle_command_sembrar(chat_id)
                 elif text_lower in ["/checar", "checar", "/check", "check"]:
                     send_telegram_message("🔍 Iniciando búsqueda manual de lanzamientos en Spotify...")
                     run_check_async(chat_id)
